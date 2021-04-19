@@ -1,0 +1,27 @@
+From 86d1e4e3815fa6c47613bda86820ee50e41ebd11 Mon Sep 17 00:00:00 2001
+From: Helmut Grohne <helmut@subdivi.de>
+Date: Tue, 16 Mar 2021 19:52:10 -0400
+Subject: configure.ac: export CC before invoking compute-symver-floor.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+compute-symver-floor may need to run the compiler, and due to an
+oversight in configure.ac it was always using ‘cc’ rather than the
+compiler in $CC.  Particularly when cross compiling, it is essential
+to use the same compiler here that the rest of the build would.
+
+Issue originally reported as Debian bug #985372.
+
+diff --git a/configure.ac b/configure.ac
+index ec21bd1..3e97844 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -434,6 +434,7 @@ if test x$enable_shared != xyes; then enable_obsolete_api=0; fi
+ if test $enable_obsolete_api = 1; then
+   AC_MSG_CHECKING([minimum symbol version to use for compatibility symbols])
+   SYMVER_FLOOR=$(
++    export CC
+     $PERL ${srcdir}/build-aux/compute-symver-floor \
+       ${srcdir}/lib/libcrypt.minver $host_os $host_cpu \
+     2>&AS_MESSAGE_LOG_FD
