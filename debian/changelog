@@ -1,3 +1,9 @@
+libxcrypt (1:4.4.18-4pexip2) pexip-bullseye; urgency=medium
+
+  * Main bullseye build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 24 Jun 2022 13:56:07 +0100
+
 libxcrypt (1:4.4.18-4pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging
