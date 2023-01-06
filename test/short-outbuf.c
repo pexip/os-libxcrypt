@@ -38,21 +38,18 @@ static const struct testcase testcases[] =
 int
 main (void)
 {
-  bool ok       = true;
-  char **outbuf = malloc (sizeof (char*));
+  bool ok = true;
   char result[5];
 
   for (size_t i = 0; i < ARRAY_SIZE (testcases); i++)
     {
-      size_t *j = malloc (sizeof (size_t));
+      size_t s = i + 1;
+      int j = (int) s;
+      char *outbuf = malloc (sizeof (char) * s);
 
-      *j = i + 1;
+      crypt_rn ("@@", "@@", outbuf, j);
 
-      *outbuf = malloc (sizeof (char*) * *j);
-
-      crypt_rn ("@@", "@@", *outbuf, (int) *j);
-
-      if (!strncmp (testcases[i].exp_rn, *outbuf, *j))
+      if (!strncmp (testcases[i].exp_rn, outbuf, s))
         {
           strcpy (result, "PASS");
         }
@@ -63,11 +60,11 @@ main (void)
         }
 
       printf ("Test %zu.0: %s, expected: \"%-2s\", got: \"%-2s\"\n",
-              i + 1, result, testcases[i].exp_rn, *outbuf);
+              s, result, testcases[i].exp_rn, outbuf);
 
-      crypt_ra ("@@", "@@", (void **) outbuf, (int *) j);
+      crypt_ra ("@@", "@@", (void **) &outbuf, &j);
 
-      if (!strncmp (testcases[i].exp_ra, *outbuf, strlen(*outbuf)))
+      if (!strncmp (testcases[i].exp_ra, outbuf, strlen(outbuf)))
         {
           strcpy (result, "PASS");
         }
@@ -78,13 +75,10 @@ main (void)
         }
 
       printf ("Test %zu.1: %s, expected: \"%-2s\", got: \"%-2s\"\n",
-              i + 1, result, testcases[i].exp_ra, *outbuf);
+              s, result, testcases[i].exp_ra, outbuf);
 
-      free (j);
-      free (*outbuf);
+      free (outbuf);
     }
-
-  free (outbuf);
 
   return ok ? 0 : 1;
 }

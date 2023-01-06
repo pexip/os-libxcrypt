@@ -59,14 +59,20 @@ get_random_bytes(void *buf, size_t buflen)
 {
   if (buflen == 0)
     return true;
+
+  /* Some, but not all, of the primitives below are limited to
+     producing no more than 256 bytes of random data.  Impose this
+     constraint on our callers regardless of which primitive is
+     actually used.  */
   if (buflen > 256)
     {
       errno = EIO;
       return false;
     }
+
   /* To eliminate the possibility of one of the primitives below failing
      with EFAULT, force a crash now if the buffer is unwritable.  */
-  XCRYPT_SECURE_MEMSET (buf, buflen);
+  explicit_bzero (buf, buflen);
 
 #ifdef HAVE_ARC4RANDOM_BUF
   /* arc4random_buf, if it exists, can never fail.  */

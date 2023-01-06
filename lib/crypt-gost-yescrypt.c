@@ -58,6 +58,10 @@ gensalt_gost_yescrypt_rn (unsigned long count,
                           const uint8_t *rbytes, size_t nrbytes,
                           uint8_t *output, size_t o_size)
 {
+  /* Up to 512 bits (64 bytes) of entropy for computing the salt portion
+     of the MCF-setting are supported.  */
+  nrbytes = (nrbytes > 64 ? 64 : nrbytes);
+
   if (o_size < 4 + 8 * 6 + BASE64_LEN (nrbytes) + 1 ||
       CRYPT_GENSALT_OUTPUT_SIZE < 4 + 8 * 6 + BASE64_LEN (nrbytes) + 1)
     {
@@ -110,7 +114,7 @@ crypt_gost_yescrypt_rn (const char *phrase, size_t phr_size,
   intbuf->gsetting[0] = '$';
   intbuf->gsetting[1] = 'y';
   intbuf->gsetting[2] = '$';
-  XCRYPT_STRCPY_OR_ABORT (&intbuf->gsetting[3], set_size - 3, setting + 4);
+  strcpy_or_abort (&intbuf->gsetting[3], set_size - 3, setting + 4);
 
   intbuf->retval = yescrypt_r (NULL, &intbuf->local,
                                (const uint8_t *) phrase, phr_size,
@@ -171,7 +175,7 @@ crypt_gost_yescrypt_rn (const char *phrase, size_t phr_size,
   encode64 ((uint8_t *) hptr, o_size - (size_t) ((uint8_t *) hptr - intbuf->retval),
             intbuf->y, sizeof (intbuf->y));
 
-  XCRYPT_STRCPY_OR_ABORT (output, o_size, intbuf->outbuf);
+  strcpy_or_abort (output, o_size, intbuf->outbuf);
   return;
 }
 

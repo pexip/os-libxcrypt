@@ -409,10 +409,10 @@ main (void)
 
   for (tcase = testcases; tcase->prefix; tcase++)
     {
-      XCRYPT_SECURE_MEMSET (prev_output, CRYPT_GENSALT_OUTPUT_SIZE);
+      memset (prev_output, 0, CRYPT_GENSALT_OUTPUT_SIZE);
       for (ent = 0; ent < ARRAY_SIZE (entropy); ent++)
         {
-          XCRYPT_SECURE_MEMSET (output, CRYPT_GENSALT_OUTPUT_SIZE);
+          memset (output, 0, CRYPT_GENSALT_OUTPUT_SIZE);
           char *salt = crypt_gensalt_rn (tcase->prefix, tcase->rounds,
                                          entropy[ent], 16,
                                          output, CRYPT_GENSALT_OUTPUT_SIZE);
@@ -467,7 +467,7 @@ main (void)
             fprintf (stderr, "   ok: %s/%lu/%u -> %s\n",
                      tcase->prefix, tcase->rounds, ent, salt);
 
-          XCRYPT_STRCPY_OR_ABORT (prev_output, CRYPT_GENSALT_OUTPUT_SIZE, salt);
+          strcpy_or_abort (prev_output, CRYPT_GENSALT_OUTPUT_SIZE, salt);
 
           /* Test if crypt works with this salt. */
           if (!tcase->rounds)

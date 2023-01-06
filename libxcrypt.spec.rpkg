@@ -48,7 +48,11 @@
 
 
 # First version of glibc built without libcrypt.
-%global glibc_minver     2.27
+%global glibc_minver     2.28
+
+
+# Minimum version of Perl needed for some build-scripts.
+%global perl_minver      5.14
 
 
 # The libxcrypt-devel package conflicts with out-dated manuals
@@ -116,11 +120,6 @@
 %global _ld_strict_symbol_defs 1
 
 
-# The library uses symbol versioning in way
-# that is not compatible with LTO currently.
-%undefine _lto_cflags
-
-
 Name:           {{{ git_name }}}
 Version:        {{{ git_real_version }}}
 Release:        0.{{{ git_real_release }}}%{?dist}
@@ -137,13 +136,28 @@ Source0:        {{{ git_dir_pack }}}
 BuildRequires:  autoconf
 BuildRequires:  automake
 BuildRequires:  gcc
-BuildRequires:  glibc-devel           >= %{glibc_minver}
+BuildRequires:  glibc-devel                  >= %{glibc_minver}
 BuildRequires:  libtool
 BuildRequires:  make
-BuildRequires:  perl-core
+BuildRequires:  perl-interpreter             >= %{perl_minver}
+BuildRequires:  perl(Class::Struct)
+BuildRequires:  perl(Cwd)
+BuildRequires:  perl(Exporter)
+BuildRequires:  perl(File::Spec::Functions)
+BuildRequires:  perl(File::Temp)
+BuildRequires:  perl(FindBin)
+BuildRequires:  perl(if)
+BuildRequires:  perl(IPC::Open3)
+BuildRequires:  perl(lib)
+BuildRequires:  perl(open)
+BuildRequires:  perl(POSIX)
+BuildRequires:  perl(Symbol)
+BuildRequires:  perl(utf8)
+BuildRequires:  perl(:VERSION)               >= %{perl_minver}
+BuildRequires:  perl(warnings)
 
 # We do not need to keep this forever.
-%if !(0%{?fedora} > 31 || 0%{?rhel} > 10)
+%if !(0%{?fedora} > 31 || 0%{?rhel} > 9)
 # Inherited from former libcrypt package.
 Obsoletes:      libcrypt-nss           < %{glibc_minver}
 Provides:       libcrypt-nss           = %{glibc_minver}
@@ -165,8 +179,10 @@ Provides:       %{name}-common         = %{version}-%{release}
 Obsoletes:      %{name}-compat         < %{version}-%{release}
 %endif
 
+%if !(0%{?fedora} > 34 || 0%{?rhel} > 9)
 # We need a version of glibc, that doesn't build libcrypt anymore.
 Requires:       glibc%{?_isa}         >= %{glibc_minver}
+%endif
 
 %if 0%{?fedora} >= 30
 Recommends:     mkpasswd
@@ -198,8 +214,15 @@ that have been provided by glibc's libcrypt.so.1.
 %package        compat
 Summary:        Compatibility library providing legacy API functions
 
+# For testing the glibc compatibility symbols.
+BuildRequires:  libxcrypt-compat
+
 Requires:       %{name}%{?_isa}        = %{version}-%{release}
+
+%if !(0%{?fedora} > 34 || 0%{?rhel} > 9)
+# We need a version of glibc, that doesn't build libcrypt anymore.
 Requires:       glibc%{?_isa}         >= %{glibc_minver}
+%endif
 
 %description    compat
 This package contains the library providing the compatibility API
@@ -274,7 +297,7 @@ This version of the libcrypt.so.1 library has entirely removed
 the functionality of the encrypt, encrypt_r, setkey, setkey_r,
 and fcrypt functions, while keeping fully binary compatibility
 with existing (third-party) applications possibly still using
-those functions.  If such an application attempts to call one of
+those funtions.  If such an application attemps to call one of
 these functions, the corresponding function will indicate that
 it is not supported by the system in a POSIX-compliant way.
 
@@ -312,6 +335,7 @@ pushd %{_vpath_builddir}
   --enable-obsolete-api-enosys=%{enosys_stubs}
 %endif
 %make_build
+%make_build test-programs
 popd
 
 %if %{with compat_pkg}
@@ -325,8 +349,50 @@ pushd %{_vpath_builddir}-compat
   --enable-obsolete-api=%{compat_api}            \
   --enable-obsolete-api-enosys=%{enosys_stubs}
 %make_build
+%make_build test-programs
 popd
 %endif
+
+mkdir -p %{_vpath_builddir}-all_possible_tests
+
+# The configure scripts want to use -Wl,--wrap to run some
+# special tests, which is not compatible with LTO.
+%global system_lto_cflags_bak %{_lto_cflags}
+%define _lto_cflags %{nil}
+
+# Reset compiler flags in env.
+unset CFLAGS
+unset CXXFLAGS
+unset FFLAGS
+unset FCFLAGS
+unset LDFLAGS
+unset LT_SYS_LIBRARY_PATH
+
+# Build a library suitable for all possible tests.
+pushd %{_vpath_builddir}-all_possible_tests
+# Disable arc4random_buf on purpose, so we are able
+# to run test/getrandom-fallback from testsuite.
+%configure                                       \
+ac_cv_func_arc4random_buf=no                     \
+%if %{with compat_pkg}
+  %{common_configure_options}                    \
+  --enable-hashes=all                            \
+  --enable-obsolete-api=%{compat_api}            \
+  --enable-obsolete-api-enosys=%{enosys_stubs}
+%else
+  %{common_configure_options}                    \
+  --enable-hashes=%{hash_methods}                \
+  --enable-obsolete-api=%{obsolete_api}          \
+%if %{with new_api}
+  --enable-obsolete-api-enosys=%{obsolete_api}
+%else
+  --enable-obsolete-api-enosys=%{enosys_stubs}
+%endif
+%endif
+%define _lto_cflags %{system_lto_cflags_bak}
+%make_build
+%make_build test-programs
+popd
 
 
 %install
@@ -358,6 +424,7 @@ build_dirs="%{_vpath_builddir}"
 %if %{with compat_pkg}
 build_dirs="${build_dirs} %{_vpath_builddir}-compat"
 %endif
+build_dirs="${build_dirs} %{_vpath_builddir}-all_possible_tests"
 for dir in ${build_dirs}; do
   %make_build -C ${dir} check || \
     {
