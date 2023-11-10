@@ -101,7 +101,7 @@ des_gen_hash (struct des_ctx *ctx, uint32_t count, uint8_t *output,
               uint8_t cbuf[8])
 {
   uint8_t plaintext[8];
-  XCRYPT_SECURE_MEMSET (plaintext, 8);
+  memset (plaintext, 0, 8);
   des_crypt_block (ctx, cbuf, plaintext, count, false);
 
   /* Now encode the result.  */
@@ -114,7 +114,7 @@ des_gen_hash (struct des_ctx *ctx, uint32_t count, uint8_t *output,
       c1 = *sptr++;
       *output++ = ascii64[c1 >> 2];
       c1 = (c1 & 0x03) << 4;
-      if (sptr >= end)
+      if (end - sptr <= 0)
         {
           *output++ = ascii64[c1];
           break;
@@ -124,7 +124,7 @@ des_gen_hash (struct des_ctx *ctx, uint32_t count, uint8_t *output,
       c1 |= c2 >> 4;
       *output++ = ascii64[c1];
       c1 = (c2 & 0x0f) << 2;
-      if (sptr >= end)
+      if (end - sptr <= 0)
         {
           *output++ = ascii64[c1];
           break;
@@ -135,7 +135,7 @@ des_gen_hash (struct des_ctx *ctx, uint32_t count, uint8_t *output,
       *output++ = ascii64[c1];
       *output++ = ascii64[c2 & 0x3f];
     }
-  while (sptr < end);
+  while (end - sptr > 0);
   *output = '\0';
 }
 #endif
@@ -373,7 +373,7 @@ crypt_bsdicrypt_rn (const char *phrase, size_t ARG_UNUSED (phr_size),
      set as the DES key, and encrypted to produce the round output.
      The salt is zero throughout this procedure.  */
   des_set_salt (ctx, 0);
-  XCRYPT_SECURE_MEMSET (pkbuf, 8);
+  memset (pkbuf, 0, 8);
   for (;;)
     {
       for (i = 0; i < 8; i++)
@@ -435,8 +435,9 @@ gensalt_bigcrypt_rn (unsigned long count,
   gensalt_descrypt_rn (count, rbytes, nrbytes, output, output_size);
 
 #if !INCLUDE_descrypt
-  /* ... add 12 trailing characters to signalize bigcrypt.  */
-  XCRYPT_STRCPY_OR_ABORT (output + 2, output_size - 2, "............");
+  /* ... add 12 trailing dummy characters, which makes the string too
+     long to be a descrypt setting, thus bigcrypt will be used.  */
+  strcpy_or_abort (output + 2, output_size - 2, "............");
 #endif
 }
 #endif

@@ -3,6 +3,139 @@ libxcrypt NEWS -- history of user-visible changes.
 Please send bug reports, questions and suggestions to
 <https://github.com/besser82/libxcrypt/issues>.
 
+Version 4.4.33
+* Fix -Werror=sign-conversion in lib/alg-yescrypt-platform.c.
+  With commit 894aee75433b4dc8d9724b126da6e79fa5f6814b we introduced some
+  changes to huge page handling, that show this error when building with
+  GCC v12.2.1, and thus need a small fix.
+
+Version 4.4.32
+* Improvements to huge page handling in lib/alg-yescrypt-platform.c.
+  When explicitly using huge pages, request the 2 MiB page size.
+  This should fix the issue where on a system configured to use 1 GiB
+  huge pages we'd fail on munmap() as we're only rounding the size up
+  to a multiple of 2 MiB.  With the fix, we wouldn't use huge pages on
+  such a system.  Unfortunately, now we also wouldn't use huge pages on
+  Linux kernels too old to have MAP_HUGE_2MB (issue #152).
+
+Version 4.4.31
+* Fix -Werror=conversion in lib/alg-yescrypt-opt.c
+  (issues #161 and #162).
+* Add some SHA-2 Maj() optimization in lib/alg-sha256.c.
+* Fix issues found by Covscan in test/getrandom-fallback.c.
+* Fix -Werror=strict-overflow in lib/crypt-des.c, which is seen
+  by GCC 12.x (issues #155 and #163).
+
+Version 4.4.30
+* configure: Restore ucontext api functionality check.
+  In c3f01c72b303cbbb0cc8983120677edee2f3fa4b the use of the ucontext api
+  in the main program was removed, and with it the configure check for it.
+  However, the ucontext api is still used in the "explicit_bzero" test and
+  thus this test still needs to be in place.
+  See also: https://bugs.gentoo.org/838172
+* configure: Restore the functionality of the '--disable-symvers' switch.
+  Without this fix the build was simply broken, if symbol versioning was
+  disabled for any reason, e.g. whether the compiler nor the linker
+  supporting it, or if disabled on purpose by the user (issue #142).
+* Fix variable name in crypt(3) for a datamember of 'struct crypt_data'
+  (issue #153).
+
+Version 4.4.29
+* Add glibc-on-loongarch-lp64 (Loongson LA464 / LA664) entry to
+  libcrypt.minver.  This was added in GNU libc 2.36.
+
+Version 4.4.28
+* Add glibc-on-or1k (OpenRISC 1000) entry to libcrypt.minver.
+  This was added in GNU libc 2.35.
+
+Version 4.4.27
+* Limit the maximum amount of rbytes to 64 bytes (512 bits) for
+  yescrypt, gost-yescrypt, and scrypt.  Also reflect this limit
+  in the documentation (issue #145).
+
+Version 4.4.26
+* Fix compilation on systems with GCC >= 10, that do not support
+  declarations with __attribute__((symver)).
+
+Version 4.4.25
+* Add support for Python 3.11 in the configure script.
+* Stricter checking of invalid salt characters (issue #135).
+  Hashed passphrases are always entirely printable ASCII, and do
+  not contain any whitespace or the characters ':', ';', '*', '!',
+  or '\'.  (These characters are used as delimiters and special
+  markers in the passwd(5) and shadow(5) files.)
+
+Version 4.4.24
+* Add hash group for Debian in lib/hashes.conf.
+  Debian has switched to use the yescrypt hashing algorithm as
+  the default for new user passwords, so we should add a group
+  for this distribution.
+* Overhaul the badsalt test.
+  Test patterns are now mostly generated rather than manually coded
+  into a big table.  Not reading past the end of the “setting” part
+  of the string is tested more thoroughly (this would have caught the
+  sunmd5 $$ bug if it had been available at the time).
+  Test logs are tidier.
+* Add ‘test-programs’ utility target to Makefile.
+  It is sometimes useful to compile all the test programs but not run
+  them.  Add a Makefile target that does this.
+* Fix incorrect bcrypt-related ifdeffage in test/badsalt.c.
+  The four variants of bcrypt are independently configurable, but the
+  badsalt tests for them were all being toggled by INCLUDE_bcrypt,
+  which is only the macro for the $2b$ variant.
+* Fix bigcrypt-related test cases in test/badsalt.c.
+  The test spec was only correct when both or neither of bigcrypt and
+  descrypt were enabled.
+* Detect ASan in configure and disable incompatible tests.
+  ASan’s “interceptors” for crypt and crypt_r have a semantic conflict
+  with libxcrypt, requiring a few tests to be disabled for builds with
+  -fsanitize-address.  See commentary in test/crypt-badargs.c for an
+  explanation of the conflict, and the commentary in
+  build-aux/m4/zw_detect_asan.m4 for why a configure test is required.
+* Fix several issues found by Covscan in the testsuite.  These include:
+  - CWE-170: String not null terminated (STRING_NULL)
+  - CWE-188: Reliance on integer endianness (INCOMPATIBLE_CAST)
+  - CWE-190: Unintentional integer overflow (OVERFLOW_BEFORE_WIDEN)
+  - CWE-569: Wrong sizeof argument (SIZEOF_MISMATCH)
+  - CWE-573: Missing varargs init or cleanup (VARARGS)
+  - CWE-687: Argument cannot be negative (NEGATIVE_RETURNS)
+
+Version 4.4.23
+* Fix output calculation for gensalt_yescrypt_rn().
+* Fix -Werror=conversion in lib/crypt-des-obsolete.c,
+  test/des-obsolete.c, and test/des-obsolete_r.c.
+
+Version 4.4.22
+* The crypt_checksalt() function has been fixed to correctly return
+  with 'CRYPT_SALT_INVALID', in case the setting, that is passed
+  to be checked, represents an empty passphrase or an uncomputed
+  setting for descrypt without any salt characters.
+
+Version 4.4.21
+* The crypt_checksalt() function will now return the value
+  'CRYPT_SALT_METHOD_LEGACY' in case the setting, that is passed
+  to be checked, uses a hashing method, which is considered to be
+  too weak for use with new passphrases.
+
+Version 4.4.20
+* Fix build when the CFLAGS variable, that is passed into the
+  configure script, has a leading whitespace character in it
+  (issue #123).
+
+Version 4.4.19
+* Improve fallback implementation of explicit_bzero.
+* Add glibc-on-CSKY, ARC, and RISCV-32 entries to libcrypt.minver.
+  These were added in GNU libc 2.29, 2.32, and 2.33 respectively
+  (issue #122).
+* Do not build xcrypt.h if we’re not going to install it.
+* Do not apply --enable-obsolete-api-enosys mode to fcrypt.
+* Compilation fix for NetBSD.  NetBSD’s <unistd.h> declares encrypt
+  and setkey to return int, contrary to POSIX (which says they return
+  void).  Rename those declarations out of the way with macros.
+* Compilation fixes for building with GCC 11.
+  Basically fixes for explicit type-casting.
+* Force update of existing symlinks during installation (issue #120).
+
 Version 4.4.18
 * Fix compilation errors on (Free)BSD (issue #110).
 * Fix conversion error in lib/alg-gost3411-core.c, which is seen by
@@ -13,7 +146,6 @@ Version 4.4.18
 Version 4.4.17
 * Fix compilation error in 'alignas (type)' with older versions
   of glibc and/or gcc (issue #107).
-
 * Salt string compatibility with generic implementations (issue #105).
   All other existing implementations of the md5crypt, sha256crypt,
   and sha512crypt hashing methods allow any ASCII character to be
@@ -23,7 +155,6 @@ Version 4.4.17
   which serves a special purpose in the Unix shadow file, and the
   newline '\n' character, since all parameters of the user data must
   be on the same line within the Unix shadow file.
-
 * Fix for GCC 10.2 on s390x.
 
 Version 4.4.16
@@ -340,7 +471,6 @@ Version 4.0.0
   glibc libcrypt).
 * struct crypt_data is now only 32kB (from 128kB), and divided into a
   public-API section and a properly opaque internal section.
-
 * New feature: supplying a null pointer as the "prefix" argument to
   any of the crypt_gencrypt functions will cause it to select the best
   available hash function (in this release, bcrypt in mode 'a').
@@ -350,7 +480,6 @@ Version 4.0.0
 * New feature: supplying a null pointer as the "rbytes" argument to
   any of the crypt_gencrypt functions will cause it to acquire random
   bytes from the operating system.
-
 * The legacy functions bigcrypt, fcrypt, encrypt, encrypt_r,
   setkey, and setkey_r are no longer available for use by new programs.
   All of these (except fcrypt, which was just another name for crypt)
@@ -367,7 +496,6 @@ Version 4.0.0
   --disable-obsolete-api, and will prevent DES and MD5 password hashes
   from being *verified* -- accounts with such hashes are effectively
   locked.  It is intended for use in high-security new installations.
-
 * Sensitive intermediate data is now thoroughly scrubbed from the
   stack and CPU registers before the crypt functions return to their
   callers.

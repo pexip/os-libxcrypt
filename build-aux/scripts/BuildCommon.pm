@@ -293,14 +293,16 @@ sub which {
 #
 
 use Class::Struct HashSpec => [
-    name    => '$',
-    prefix  => '$',
-    nrbytes => '$',
+    name      => '$',
+    prefix    => '$',
+    nrbytes   => '$',
+    is_strong => '$',
 ];
 use Class::Struct HashesConfData => [
     hashes             => '*%',
     groups             => '*%',
     max_namelen        => '$',
+    max_nrbyteslen     => '$',
     max_prefixlen      => '$',
     default_candidates => '*@',
 ];
@@ -312,6 +314,7 @@ my %VALID_FLAGS = (
     STRONG  => 1,
     DEFAULT => 1,
     ALT     => 1,
+    DEBIAN  => 1,
     FEDORA  => 1,
     FREEBSD => 1,
     GLIBC   => 1,
@@ -351,8 +354,9 @@ sub parse_hashes_conf {
     my %line_of;
     my %hashes;
     my %groups;
-    my $max_namelen   = 0;
-    my $max_prefixlen = 0;
+    my $max_namelen    = 0;
+    my $max_nrbyteslen = 0;
+    my $max_prefixlen  = 0;
     my @default_candidates;
     local $_;
     while (<$fh>) {
@@ -397,6 +401,10 @@ sub parse_hashes_conf {
             $nrbytes = 1;
         }
 
+        if ($max_nrbyteslen < length $nrbytes) {
+            $max_nrbyteslen = length $nrbytes;
+        }
+
         $flags = q{} if $flags eq ':';
         for (split /,/, $flags) {
             if (!exists $VALID_FLAGS{$_}) {
@@ -417,9 +425,10 @@ sub parse_hashes_conf {
         next if $error;
 
         my $entry = HashSpec->new(
-            name    => $name,
-            prefix  => $h_prefix,
-            nrbytes => $nrbytes,
+            name      => $name,
+            prefix    => $h_prefix,
+            nrbytes   => $nrbytes,
+            is_strong => $is_strong,
         );
         $hashes{$name} = $entry;
         for my $g (@grps) {
@@ -458,6 +467,7 @@ sub parse_hashes_conf {
         hashes             => \%hashes,
         groups             => \%groups,
         max_namelen        => $max_namelen,
+        max_nrbyteslen     => $max_nrbyteslen,
         max_prefixlen      => $max_prefixlen,
         default_candidates => \@default_candidates,
     );
@@ -694,7 +704,7 @@ sub parse_version_map_in {    ## no critic (Subroutines::RequireArgUnpacking)
 
     my (undef, undef, $basemap) = splitpath($map_in);
     return SymbolVersionMap->new(
-        symbols    => [values %symbols],
+        symbols    => [sort { $a->name cmp $b->name } values %symbols],
         versions   => \@vchain,
         basemap    => $basemap,
         max_symlen => $max_symlen,

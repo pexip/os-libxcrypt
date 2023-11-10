@@ -50,21 +50,23 @@
 #include <sys/param.h>
 #endif
 
-/* The prototypes of the crypt() function and struct crypt_data possibly
-   defined in <unistd.h> need to be renamed as they might be incompatible
-   with our declaration.
-   Defining these macros *AFTER* <crypt-symbol-vers.h>, which also defines
-   the same macros for symbol-versioning purposes, was included, would lead
-   to a clashing redefinition of these macros, and thus cause our internal
-   symbol-versioning would not work properly anymore.  */
+/* unistd.h may contain declarations of crypt, crypt_r, crypt_data,
+   encrypt, and setkey; if present, they may be incompatible with our
+   declarations.  Rename them out of the way with macros.  This needs
+   to be done before we include crypt-symbol-vers.h, which defines
+   macros with the same names for symbol-versioning purposes.  */
 #ifdef HAVE_UNISTD_H
 #define crypt unistd_crypt_is_incompatible
 #define crypt_r unistd_crypt_r_is_incompatible
 #define crypt_data unistd_crypt_data_is_incompatible
+#define encrypt unistd_encrypt_is_incompatible
+#define setkey unistd_setkey_is_incompatible
 #include <unistd.h>
 #undef crypt
 #undef crypt_r
 #undef crypt_data
+#undef encrypt
+#undef setkey
 #endif
 
 #ifndef HAVE_SYS_CDEFS_THROW
@@ -76,6 +78,13 @@
 # define ARG_UNUSED(x) x __attribute__ ((__unused__))
 #else
 # define ARG_UNUSED(x) x
+#endif
+
+/* Functions that should not be inlined.  */
+#if defined __GNUC__ && __GNUC__ >= 3
+# define NO_INLINE __attribute__ ((__noinline__))
+#else
+# error "Don't know how to prevent function inlining"
 #endif
 
 /* C99 Static array indices in function parameter declarations.  Syntax
@@ -137,42 +146,43 @@ typedef union
 #undef MAX
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
-/* ARRAY_SIZE is used in tests.  */
+/* Size of a declared array.  */
 #define ARRAY_SIZE(a_)  (sizeof (a_) / sizeof ((a_)[0]))
 
-/* Provide a guaranteed way to erase sensitive memory at the best we
-   can, given the possibilities of the system.  */
-#if defined HAVE_MEMSET_S
-/* Will never be optimized out.  */
-#define XCRYPT_SECURE_MEMSET(s, len) \
-  memset_s (s, len, 0x00, len)
-#elif defined HAVE_EXPLICIT_BZERO
-/* explicit_bzero() should give us enough guarantees.  */
-#define XCRYPT_SECURE_MEMSET(s, len) \
-  explicit_bzero(s, len)
+/* Not all systems provide a library function usable for erasing
+   memory containing sensitive data, and among those that do, there is
+   no standard for what it should be called.  (Plain memset and bzero
+   are not usable for this purpose, because the compiler may remove
+   calls to these functions if it thinks the stores are dead.)
+
+   All code in libxcrypt is standardized on explicit_bzero() as the
+   name for the function that does this job; here, we map that name
+   to whatever platform routine is available, or to our own fallback
+   implementation.  */
+#define INCLUDE_explicit_bzero 0
+#if defined HAVE_EXPLICIT_BZERO
+/* nothing to do */
 #elif defined HAVE_EXPLICIT_MEMSET
-/* Same guarantee goes for explicit_memset().  */
-#define XCRYPT_SECURE_MEMSET(s, len) \
-  explicit_memset (s, 0x00, len)
+#define explicit_bzero(s, len) explicit_memset(s, 0, len)
+#elif defined HAVE_MEMSET_S
+#define explicit_bzero(s, len) memset_s(s, len, 0, len)
 #else
-/* The best hope we have in this case.  */
-#define INCLUDE_XCRYPT_SECURE_MEMSET 1
-extern void _crypt_secure_memset (void *, size_t);
-#define XCRYPT_SECURE_MEMSET(s, len) \
-  _crypt_secure_memset (s, len)
-#endif
-#ifndef INCLUDE_XCRYPT_SECURE_MEMSET
-#define INCLUDE_XCRYPT_SECURE_MEMSET 0
+/* activate our fallback implementation */
+#undef INCLUDE_explicit_bzero
+#define INCLUDE_explicit_bzero 1
+#define explicit_bzero _crypt_explicit_bzero
+extern void explicit_bzero (void *, size_t);
 #endif
 
 /* Provide a safe way to copy strings with the guarantee src,
    including its terminating '\0', will fit d_size bytes.
    The trailing bytes of d_size will be filled with '\0'.
-   dst and src must not be NULL.  Returns strlen (src).  */
-extern size_t
-_crypt_strcpy_or_abort (void *, const size_t, const void *);
-#define XCRYPT_STRCPY_OR_ABORT(dst, d_size, src) \
-  _crypt_strcpy_or_abort (dst, d_size, src)
+   dst and src must not be NULL.  Returns strlen (src).
+   Note: dst and src are declared as void * instead of char *
+   because some of the hashing methods want to call this
+   function with unsigned char * arguments.  */
+#define strcpy_or_abort _crypt_strcpy_or_abort
+extern size_t strcpy_or_abort (void *dst, size_t d_size, const void *src);
 
 
 /* Define ALIASNAME as a strong alias for NAME.  */
@@ -196,10 +206,28 @@ _crypt_strcpy_or_abort (void *, const size_t, const void *);
 # define _strong_alias(name, aliasname) \
   extern __typeof (name) aliasname __THROW __attribute__ ((alias (#name)))
 
+/* Starting with GCC 10, we can use the symver attribute, which is also
+   needed at the point we decide to enable link-time optimization.  */
+# if defined HAVE_FUNC_ATTRIBUTE_SYMVER
+
+/* Set the symbol version for EXTNAME, which uses INTNAME as its
+   implementation.  */
+# define symver_set(extstr, intname, version, mode) \
+  extern __typeof (intname) intname __THROW \
+    __attribute__((symver (extstr mode #version)))
+
+/* Referencing specific _compatibility_ symbols still needs inline asm.  */
+# define _symver_ref(extstr, intname, version) \
+  __asm__ (".symver " #intname "," extstr "@" #version)
+
+# else
+
 /* Set the symbol version for EXTNAME, which uses INTNAME as its
    implementation.  */
 # define symver_set(extstr, intname, version, mode) \
   __asm__ (".symver " #intname "," extstr mode #version)
+
+# endif
 
 #else
 # error "Don't know how to do symbol versioning with this compiler"
@@ -211,7 +239,7 @@ _crypt_strcpy_or_abort (void *, const size_t, const void *);
 
 /* The macros for versioned symbols work differently in this library
    than they do in glibc.  They are mostly auto-generated
-   (see build-aux/gen-crypt-symbol-vers-h)
+   (see build-aux/scripts/gen-crypt-symbol-vers-h)
    and we currently don't support compatibility symbols that need a different
    definition from the default version.
 
@@ -257,9 +285,14 @@ _crypt_strcpy_or_abort (void *, const size_t, const void *);
 
 /* Tests may need to _refer_ to compatibility symbols, but should never need
    to _define_ them.  */
-
 #define symver_ref(extstr, intname, version) \
+  _symver_ref(extstr, intname, version)
+
+/* Generic way for referencing specific _compatibility_ symbols.  */
+#ifndef _symver_ref
+#define _symver_ref(extstr, intname, version) \
   symver_set(extstr, intname, version, "@")
+#endif
 
 /* Define configuration macros used during compile-time by the
    GOST R 34.11-2012 "Streebog" hash function.  */
@@ -396,13 +429,50 @@ extern char *fcrypt (const char *key, const char *setting);
 #endif
 
 /* Utility functions */
+
+/* Fill BUF with BUFLEN bytes whose values are chosen uniformly at
+   random, using a cryptographically strong RNG provided by the
+   operating system.  BUFLEN may not be greater than 256.  Returns
+   true if all BUFLEN bytes were successfully filled, false otherwise;
+   sets errno when it returns false.  Can block.  */
 extern bool get_random_bytes (void *buf, size_t buflen);
 
+/* Generate a setting string in the format common to md5crypt,
+   sha256crypt, and sha512crypt.  */
 extern void gensalt_sha_rn (char tag, size_t maxsalt, unsigned long defcount,
                             unsigned long mincount, unsigned long maxcount,
                             unsigned long count,
                             const uint8_t *rbytes, size_t nrbytes,
                             uint8_t *output, size_t output_size);
+
+/* For historical reasons, crypt and crypt_r are not expected ever
+   to return 0, and for internal implementation reasons (see
+   call_crypt_fn, in crypt.c), it is simpler if the individual
+   algorithms' crypt and gensalt functions return nothing.
+
+   This function generates a "failure token" in the output buffer,
+   which is guaranteed not to be equal to any valid password hash or
+   setting string, nor to the setting(+hash) string that was passed
+   in; thus, a subsequent blind attempt to authenticate someone by
+   comparing the output to a previously recorded hash string will
+   fail, even if that string is itself one of these "failure tokens".
+
+   We always call this function on the output buffer as the first
+   step.  If the individual algorithm's crypt or gensalt function
+   succeeds, it overwrites the failure token with real output;
+   otherwise the token is left intact, and the API functions that
+   _can_ return 0 on error notice it.  */
+extern void
+make_failure_token (const char *setting, char *output, int size);
+
+/* The base-64 encoding table used by most hashing methods.
+   (bcrypt uses a slightly different encoding.)  Size 65
+   because it's used as a C string in a few places.  */
+extern const unsigned char ascii64[65];
+
+/* Same table gets used with other names in various places.  */
+#define b64t   ((const char *) ascii64)
+#define itoa64 ascii64
 
 /* Calculate the size of a base64 encoding of N bytes:
    6 bits per output byte, rounded up.  */
@@ -413,6 +483,5 @@ extern void gensalt_sha_rn (char tag, size_t maxsalt, unsigned long defcount,
 #define ALG_SPECIFIC_SIZE 8192
 
 #include "crypt.h"
-#include "crypt-common.h"
 
 #endif /* crypt-port.h */

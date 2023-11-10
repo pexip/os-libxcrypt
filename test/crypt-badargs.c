@@ -87,6 +87,7 @@ segv_handler (int sig)
 
 static bool error_occurred;
 
+#ifndef XCRYPT_USE_ASAN /* see comments in do_tests */
 static void
 expect_no_fault (const char *tag,
                  const char *phrase, const char *setting, const char *expect,
@@ -102,6 +103,7 @@ expect_no_fault (const char *tag,
       error_occurred = 1;
     }
 }
+#endif
 
 static void
 expect_a_fault (const char *tag,
@@ -208,6 +210,14 @@ do_tests(char *page, size_t pagesize)
   const char *p2 = page + pagesize;
   size_t i;
 
+  /* Our crypt*() functions return NULL / a failure token, with errno set
+     to EINVAL, when either the setting or the phrase argument is NULL.
+     ASan's interceptors for crypt*() instead crash the program when either
+     argument is NULL -- this is arguably a better choice, but for
+     compatibility's sake we can't change what our functions do.  There is
+     no way to disable interception of specific functions as far as I can
+     tell.  Therefore, these tests are skipped when compiled with ASan.  */
+#ifndef XCRYPT_USE_ASAN
   /* When SETTING is null, it shouldn't matter what PHRASE is.  */
   expect_no_fault ("0.0.crypt",    0,  0, FT0, test_crypt);
   expect_no_fault ("0.0.crypt_r",  0,  0, FT0, test_crypt_r);
@@ -271,31 +281,34 @@ do_tests(char *page, size_t pagesize)
   expect_a_fault ("0.p2.crypt_r",  0, p2, FT0,  test_crypt_r);
   expect_a_fault ("0.p2.crypt_rn", 0, p2, 0,    test_crypt_rn);
   expect_a_fault ("0.p2.crypt_ra", 0, p2, 0,    test_crypt_ra);
+#endif /* no ASan */
 
   /* When SETTING is valid, passing an invalid string as PHRASE should
      crash reliably.  */
   for (i = 0; i < ARRAY_SIZE (settings); i++)
     {
-      strcpy (page, "p1.'");
-      strcat (page, settings[i]);
-      strcat (page, "'.crypt");
+      snprintf (page, pagesize, "p1.'%s'.crypt", settings[i]);
       expect_a_fault (page, p1, settings[i], FT0,  test_crypt);
-      strcat (page, "_r");
+
+      snprintf (page, pagesize, "p1.'%s'.crypt_r", settings[i]);
       expect_a_fault (page, p1, settings[i], FT0,  test_crypt_r);
-      strcat (page, "n");
+
+      snprintf (page, pagesize, "p1.'%s'.crypt_rn", settings[i]);
       expect_a_fault (page, p1, settings[i], 0,    test_crypt_rn);
-      page [strlen (page) - 1] = 'a';
+
+      snprintf (page, pagesize, "p1.'%s'.crypt_ra", settings[i]);
       expect_a_fault (page, p1, settings[i], 0,    test_crypt_ra);
 
-      strcpy (page, "p2.'");
-      strcat (page, settings[i]);
-      strcat (page, "'.crypt");
+      snprintf (page, pagesize, "p2.'%s'.crypt", settings[i]);
       expect_a_fault (page, p2, settings[i], FT0,  test_crypt);
-      strcat (page, "_r");
+
+      snprintf (page, pagesize, "p2.'%s'.crypt_r", settings[i]);
       expect_a_fault (page, p2, settings[i], FT0,  test_crypt_r);
-      strcat (page, "n");
+
+      snprintf (page, pagesize, "p2.'%s'.crypt_rn", settings[i]);
       expect_a_fault (page, p2, settings[i], 0,    test_crypt_rn);
-      page [strlen (page) - 1] = 'a';
+
+      snprintf (page, pagesize, "p2.'%s'.crypt_ra", settings[i]);
       expect_a_fault (page, p2, settings[i], 0,    test_crypt_ra);
     }
 
@@ -311,15 +324,16 @@ do_tests(char *page, size_t pagesize)
       p1 = memcpy (page + pagesize - strlen (settings[i]),
                    settings[i], strlen (settings[i]));
 
-      strcpy (page, "ph.'");
-      strcat (page, settings[i]);
-      strcat (page, ".crypt");
+      snprintf (page, pagesize, "ph.'%s'.crypt", settings[i]);
       expect_a_fault (page, phrase, p1, FT0, test_crypt);
-      strcat (page, "_r");
+
+      snprintf (page, pagesize, "ph.'%s'.crypt_r", settings[i]);
       expect_a_fault (page, phrase, p1, FT0, test_crypt_r);
-      strcat (page, "n");
+
+      snprintf (page, pagesize, "ph.'%s'.crypt_rn", settings[i]);
       expect_a_fault (page, phrase, p1, 0,    test_crypt_rn);
-      page [strlen (page) - 1] = 'a';
+
+      snprintf (page, pagesize, "ph.'%s'.crypt_ra", settings[i]);
       expect_a_fault (page, phrase, p1, 0,    test_crypt_ra);
     }
 }
@@ -329,13 +343,14 @@ main (void)
 {
   /* Set up a two-page region whose first page is read-write and
      whose second page is inaccessible.  */
-  size_t pagesize = (size_t) sysconf (_SC_PAGESIZE);
-  if (pagesize < 256)
+  long pagesize_l = sysconf (_SC_PAGESIZE);
+  if (pagesize_l < 256)
     {
-      printf ("ERROR: pagesize of %zu is too small\n", pagesize);
+      printf ("ERROR: pagesize of %ld is too small\n", pagesize_l);
       return 99;
     }
 
+  size_t pagesize = (size_t) pagesize_l;
   char *page = mmap (0, pagesize * 2, PROT_READ|PROT_WRITE,
                      MAP_PRIVATE|MAP_ANON, -1, 0);
   if (page == MAP_FAILED)
