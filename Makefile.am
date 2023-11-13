@@ -12,11 +12,14 @@ AUTOMAKE_OPTIONS = \
 	gnits \
 	subdir-objects
 
-ACLOCAL_AMFLAGS = -I build-aux
+ACLOCAL_AMFLAGS = -I build-aux/m4
 
 AM_CPPFLAGS = -I$(srcdir)/lib
 AM_CFLAGS = $(WARN_CFLAGS) $(OPTI_FLAGS)
 AM_LDFLAGS = $(RELRO_FLAG) $(BINDNOW_FLAG)
+
+SCRIPTS_AUX = $(srcdir)/build-aux/scripts
+STAMP = echo timestamp >
 
 @VALGRIND_CHECK_RULES@
 
@@ -31,14 +34,16 @@ EXTRA_DIST = \
 	lib/libcrypt.map.in \
 	lib/libcrypt.minver \
 	lib/xcrypt.h.in \
-	build-aux/BuildCommon.pm \
-	build-aux/compute-symver-floor \
-	build-aux/expand-selected-hashes \
-	build-aux/gen-crypt-h \
-	build-aux/gen-crypt-hashes-h \
-	build-aux/gen-crypt-symbol-vers-h \
-	build-aux/gen-libcrypt-map \
-	build-aux/skip-if-exec-format-error \
+	build-aux/scripts/BuildCommon.pm \
+	build-aux/scripts/check-perlcritic-config \
+	build-aux/scripts/compute-symver-floor \
+	build-aux/scripts/expand-selected-hashes \
+	build-aux/scripts/gen-crypt-h \
+	build-aux/scripts/gen-crypt-hashes-h \
+	build-aux/scripts/gen-crypt-symbol-vers-h \
+	build-aux/scripts/gen-libcrypt-map \
+	build-aux/scripts/move-if-change \
+	build-aux/scripts/skip-if-exec-format-error \
 	test/TestCommon.pm \
 	test/symbols-compat.pl \
 	test/symbols-renames.pl \
@@ -75,10 +80,8 @@ noinst_HEADERS = \
 	lib/alg-sha1.h \
 	lib/alg-sha256.h \
 	lib/alg-sha512.h \
-	lib/alg-yescrypt-sysendian.h \
 	lib/alg-yescrypt.h \
 	lib/byteorder.h \
-	lib/crypt-common.h \
 	lib/crypt-obsolete.h \
 	lib/crypt-port.h \
 	test/des-cases.h \
@@ -86,8 +89,6 @@ noinst_HEADERS = \
 
 if ENABLE_XCRYPT_COMPAT_FILES
 nodist_include_HEADERS += xcrypt.h
-else
-nodist_noinst_HEADERS += xcrypt.h
 endif
 
 noinst_PROGRAMS = \
@@ -110,10 +111,8 @@ libcrypt_la_SOURCES = \
 	lib/alg-yescrypt-common.c \
 	lib/alg-yescrypt-opt.c \
 	lib/crypt-bcrypt.c \
-	lib/crypt-common.c \
 	lib/crypt-des.c \
 	lib/crypt-gensalt-static.c \
-	lib/crypt-gensalt.c \
 	lib/crypt-gost-yescrypt.c \
 	lib/crypt-md5.c \
 	lib/crypt-nthash.c \
@@ -125,7 +124,12 @@ libcrypt_la_SOURCES = \
 	lib/crypt-sunmd5.c \
 	lib/crypt-yescrypt.c \
 	lib/crypt.c \
-	lib/randombytes.c
+	lib/util-base64.c \
+	lib/util-gensalt-sha.c \
+	lib/util-get-random-bytes.c \
+	lib/util-make-failure-token.c \
+	lib/util-xbzero.c \
+	lib/util-xstrcpy.c
 
 pkgconfig_DATA = libxcrypt.pc
 
@@ -137,7 +141,7 @@ uninstall_hook_targets = \
 	uninstall-hook-pkgconfig
 install-data-hook-pkgconfig:
 	cd $(DESTDIR)$(pkgconfigdir) && \
-		$(LN_S) libxcrypt.pc libcrypt.pc
+		$(LN_S) -f libxcrypt.pc libcrypt.pc
 uninstall-hook-pkgconfig:
 	-rm -f $(DESTDIR)$(pkgconfigdir)/libcrypt.pc
 
@@ -152,6 +156,9 @@ libcrypt_la_LDFLAGS = -version-info $(libcrypt_la_VERSION)
 
 if HAVE_VSCRIPT
 libcrypt_la_LDFLAGS += $(VSCRIPT_LDFLAGS),$(builddir)/libcrypt.map
+APPLY_SYMVERS = yes
+else
+APPLY_SYMVERS = no
 endif
 
 libcrypt_la_LDFLAGS += $(UNDEF_FLAG) $(TEXT_RELOC_FLAG) $(AM_LDFLAGS)
@@ -162,11 +169,11 @@ CONFIG_STATUS_DEPENDENCIES = lib/libcrypt.minver
 EXTRA_libcrypt_la_DEPENDENCIES = libcrypt.map
 CLEANFILES = \
 	Makefile.deps Makefile.deps.T \
-	libcrypt.map libcrypt.map.T \
-	crypt-symbol-vers.h crypt-symbol-vers.h.T \
-	crypt-hashes.h crypt-hashes.h.T \
-	crypt.h crypt.h.T \
-	xcrypt.h xcrypt.h.T \
+	libcrypt.map libcrypt.map.T libcrypt.map.stamp \
+	crypt-symbol-vers.h crypt-symbol-vers.h.T crypt-symbol-vers.h.stamp \
+	crypt-hashes.h crypt-hashes.h.T crypt-hashes.h.stamp \
+	crypt.h crypt.h.T crypt.h.stamp \
+	xcrypt.h xcrypt.h.T xcrypt.h.stamp \
 	./*.gcda ./*.gcno \
 	lib/*.gcda lib/*.gcno \
 	test/*.gcda test/*.gcno
@@ -175,53 +182,81 @@ DISTCLEANFILES = .deps/*.Plo
 
 # Force generated headers to be generated before any source files that
 # might depend on them are compiled.
-Makefile.deps: crypt.h crypt-hashes.h crypt-symbol-vers.h xcrypt.h
+Makefile.deps: crypt.h crypt-hashes.h crypt-symbol-vers.h
 	$(AM_V_GEN)LC_ALL=C echo "# Deps" > Makefile.deps.T
 	$(AM_V_at)mv -f Makefile.deps.T Makefile.deps
 
-libcrypt.map: lib/libcrypt.map.in build-aux/gen-libcrypt-map \
-	      build-aux/BuildCommon.pm Makefile
-	$(AM_V_GEN)LC_ALL=C $(PERL) $(srcdir)/build-aux/gen-libcrypt-map \
+# Almost everything depends on the generated headers; the generated
+# headers depend on the Makefile; *most* changes to the Makefile won't
+# affect the contents of the generated headers.  Arrange for the
+# timestamps of the generated headers not to change if their contents
+# haven't.  The rule idiom used here was borrowed from GCC's Makefile;
+# in https://gcc.gnu.org/git/?p=gcc.git;a=blob;f=gcc/Makefile.in;hb=HEAD
+# search for the phrase "On the use of stamps".
+AM_V_GENS = $(am__v_GENS_@AM_V@)
+am__v_GENS_ = $(am__v_GENS_@AM_DEFAULT_V@)
+am__v_GENS_0 = @echo "  GEN     " $(@:.stamp=);
+am__v_GENS_1 =
+
+libcrypt.map: libcrypt.map.stamp; @:
+libcrypt.map.stamp: \
+		lib/libcrypt.map.in $(SCRIPTS_AUX)/gen-libcrypt-map \
+		$(SCRIPTS_AUX)/BuildCommon.pm Makefile
+	$(AM_V_GENS)LC_ALL=C $(PERL) $(SCRIPTS_AUX)/gen-libcrypt-map \
 	  SYMVER_MIN=$(SYMVER_MIN) \
 	  SYMVER_FLOOR=$(SYMVER_FLOOR) \
 	  COMPAT_ABI=$(COMPAT_ABI) \
 	  $(srcdir)/lib/libcrypt.map.in > libcrypt.map.T
-	$(AM_V_at)mv -f libcrypt.map.T libcrypt.map
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change libcrypt.map.T libcrypt.map
+	$(AM_V_at)$(STAMP) libcrypt.map.stamp
 
-crypt-hashes.h: build-aux/gen-crypt-hashes-h build-aux/BuildCommon.pm \
-	        lib/hashes.conf Makefile
-	$(AM_V_GEN)LC_ALL=C $(PERL) \
-	  $(srcdir)/build-aux/gen-crypt-hashes-h \
+crypt-hashes.h: crypt-hashes.h.stamp; @:
+crypt-hashes.h.stamp: \
+		$(SCRIPTS_AUX)/gen-crypt-hashes-h $(SCRIPTS_AUX)/BuildCommon.pm \
+		lib/hashes.conf Makefile
+	$(AM_V_GENS)LC_ALL=C $(PERL) \
+	  $(SCRIPTS_AUX)/gen-crypt-hashes-h \
 	  $(srcdir)/lib/hashes.conf $(hashes_enabled) > crypt-hashes.h.T
-	$(AM_V_at)mv -f crypt-hashes.h.T crypt-hashes.h
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change crypt-hashes.h.T crypt-hashes.h
+	$(AM_V_at)$(STAMP) crypt-hashes.h.stamp
 
-crypt-symbol-vers.h: build-aux/gen-crypt-symbol-vers-h \
-		     build-aux/BuildCommon.pm \
-		     lib/libcrypt.map.in Makefile
-	$(AM_V_GEN)LC_ALL=C $(PERL) \
-	  $(srcdir)/build-aux/gen-crypt-symbol-vers-h \
+crypt-symbol-vers.h: crypt-symbol-vers.h.stamp; @:
+crypt-symbol-vers.h.stamp: \
+		$(SCRIPTS_AUX)/gen-crypt-symbol-vers-h \
+		$(SCRIPTS_AUX)/BuildCommon.pm \
+		lib/libcrypt.map.in Makefile
+	$(AM_V_GENS)LC_ALL=C $(PERL) \
+	  $(SCRIPTS_AUX)/gen-crypt-symbol-vers-h \
+	  $(APPLY_SYMVERS) \
 	  SYMVER_MIN=$(SYMVER_MIN) \
 	  SYMVER_FLOOR=$(SYMVER_FLOOR) \
 	  COMPAT_ABI=$(COMPAT_ABI) \
 	     $(srcdir)/lib/libcrypt.map.in > crypt-symbol-vers.h.T
-	$(AM_V_at)mv -f crypt-symbol-vers.h.T crypt-symbol-vers.h
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change crypt-symbol-vers.h.T crypt-symbol-vers.h
+	$(AM_V_at)$(STAMP) crypt-symbol-vers.h.stamp
 
-crypt.h: build-aux/gen-crypt-h build-aux/BuildCommon.pm \
-	 lib/crypt.h.in lib/hashes.conf config.h Makefile
-	$(AM_V_GEN)LC_ALL=C $(PERL) \
-	  $(srcdir)/build-aux/gen-crypt-h \
+crypt.h: crypt.h.stamp; @:
+crypt.h.stamp: \
+		$(SCRIPTS_AUX)/gen-crypt-h $(SCRIPTS_AUX)/BuildCommon.pm \
+		lib/crypt.h.in lib/hashes.conf config.h Makefile
+	$(AM_V_GENS)LC_ALL=C $(PERL) \
+	  $(SCRIPTS_AUX)/gen-crypt-h \
 	  $(srcdir)/lib/crypt.h.in config.h \
 	  $(srcdir)/lib/hashes.conf $(hashes_enabled) \
 	  > crypt.h.T
-	$(AM_V_at)mv -f crypt.h.T crypt.h
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change crypt.h.T crypt.h
+	$(AM_V_at)$(STAMP) crypt.h.stamp
 
-xcrypt.h: build-aux/gen-crypt-h build-aux/BuildCommon.pm \
-	  lib/xcrypt.h.in config.h
-	$(AM_V_GEN)LC_ALL=C $(PERL) \
-	  $(srcdir)/build-aux/gen-crypt-h \
+xcrypt.h: xcrypt.h.stamp; @:
+xcrypt.h.stamp: \
+		$(SCRIPTS_AUX)/gen-crypt-h $(SCRIPTS_AUX)/BuildCommon.pm \
+		lib/xcrypt.h.in config.h
+	$(AM_V_GENS)LC_ALL=C $(PERL) \
+	  $(SCRIPTS_AUX)/gen-crypt-h \
 	  $(srcdir)/lib/xcrypt.h.in config.h \
 	  > xcrypt.h.T
-	$(AM_V_at)mv -f xcrypt.h.T xcrypt.h
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change xcrypt.h.T xcrypt.h
+	$(AM_V_at)$(STAMP) xcrypt.h.stamp
 
 install_exec_hook_targets =
 
@@ -236,7 +271,7 @@ uninstall_hook_targets += \
 	uninstall-hook-xcrypt-static
 install-exec-hook-xcrypt-static:
 	cd $(DESTDIR)$(libdir) && \
-		$(LN_S) libcrypt.a libxcrypt.a
+		$(LN_S) -f libcrypt.a libxcrypt.a
 uninstall-hook-xcrypt-static:
 	-rm -f $(DESTDIR)$(libdir)/libxcrypt.a
 endif
@@ -251,7 +286,7 @@ uninstall_hook_targets += \
 	uninstall-hook-xcrypt-shared
 install-exec-hook-xcrypt-shared:
 	cd $(DESTDIR)$(libdir) && \
-		$(LN_S) libcrypt.so libxcrypt.so
+		$(LN_S) -f libcrypt.so libxcrypt.so
 uninstall-hook-xcrypt-shared:
 	-rm -f $(DESTDIR)$(libdir)/libxcrypt.so
 endif
@@ -280,7 +315,7 @@ uninstall_hook_targets += \
 	uninstall-hook-libstatic
 install-exec-hook-libstatic:
 	cd $(DESTDIR)$(libdir) && \
-		$(LN_S) libcrypt.a libowcrypt.a
+		$(LN_S) -f libcrypt.a libowcrypt.a
 uninstall-hook-libstatic:
 	-rm -f $(DESTDIR)$(libdir)/libowcrypt.a
 endif
@@ -293,8 +328,8 @@ uninstall_hook_targets += \
 	uninstall-hook-libshared
 install-exec-hook-libshared:
 	cd $(DESTDIR)$(libdir) && \
-		$(LN_S) libcrypt.so libowcrypt.so && \
-		$(LN_S) libcrypt.so.1 libowcrypt.so.1
+		$(LN_S) -f libcrypt.so libowcrypt.so && \
+		$(LN_S) -f libcrypt.so.1 libowcrypt.so.1
 uninstall-hook-libshared:
 	-rm -f  $(DESTDIR)$(libdir)/libowcrypt.so \
 		$(DESTDIR)$(libdir)/libowcrypt.so.1
@@ -340,6 +375,7 @@ check_PROGRAMS = \
 	test/compile-strong-alias \
 	test/crypt-badargs \
 	test/crypt-gost-yescrypt \
+	test/explicit-bzero \
 	test/gensalt \
 	test/gensalt-extradata \
 	test/gensalt-nthash \
@@ -404,7 +440,7 @@ endif
 
 if ENABLE_OBSOLETE_API
 libcrypt_la_SOURCES += lib/crypt-des-obsolete.c
-check_PROGRAMS += test/des-obsolete test/des-obsolete_r test/fcrypt-enosys
+check_PROGRAMS += test/des-obsolete test/des-obsolete_r
 endif
 
 TESTS = $(check_PROGRAMS)
@@ -435,27 +471,22 @@ AM_TESTS_ENVIRONMENT = \
 
 PL_LOG_COMPILER = $(PERL)
 if CROSS_COMPILING
-LOG_COMPILER = $(PERL) build-aux/skip-if-exec-format-error
+LOG_COMPILER = $(PERL) $(SCRIPTS_AUX)/skip-if-exec-format-error
 endif
 
 test/symbols-compat.log test/symbols-compat.trs: test/TestCommon.pm
 test/symbols-renames.log test/symbols-renames.trs: test/TestCommon.pm
 test/symbols-static.log test/symbols-static.trs: test/TestCommon.pm
 
-# Refer to object files that are linked into libxcrypt with the
-# qualified name, lib/libcrypt_la-foobar.lo, to prevent them from
-# being compiled a second time.
-COMMON_TEST_OBJECTS = lib/libcrypt_la-crypt-common.lo libcrypt.la
+COMMON_TEST_OBJECTS = libcrypt.la
 
 test_badsalt_LDADD = $(COMMON_TEST_OBJECTS)
 test_badsetting_LDADD = $(COMMON_TEST_OBJECTS)
-test_gensalt_LDADD = $(COMMON_TEST_OBJECTS)
 test_gensalt_nthash_LDADD = $(COMMON_TEST_OBJECTS)
 test_gensalt_extradata_LDADD = $(COMMON_TEST_OBJECTS)
 test_checksalt_LDADD = $(COMMON_TEST_OBJECTS)
 test_des_obsolete_LDADD = $(COMMON_TEST_OBJECTS)
 test_des_obsolete_r_LDADD = $(COMMON_TEST_OBJECTS)
-test_fcrypt_enosys_LDADD = $(COMMON_TEST_OBJECTS)
 test_crypt_badargs_LDADD = $(COMMON_TEST_OBJECTS)
 test_short_outbuf_LDADD = $(COMMON_TEST_OBJECTS)
 test_preferred_method_LDADD = $(COMMON_TEST_OBJECTS)
@@ -480,6 +511,12 @@ test_ka_yescrypt_LDADD = $(COMMON_TEST_OBJECTS)
 
 # These tests call internal APIs that may not be accessible from the
 # fully linked shared library.
+# Refer to object files that are linked into libxcrypt with the
+# qualified name, lib/libcrypt_la-foobar.lo, to prevent them from
+# being compiled a second time.
+test_gensalt_LDADD = \
+	lib/libcrypt_la-util-xstrcpy.lo \
+	$(COMMON_TEST_OBJECTS)
 test_alg_des_LDADD = \
 	lib/libcrypt_la-alg-des.lo \
 	lib/libcrypt_la-alg-des-tables.lo \
@@ -487,37 +524,48 @@ test_alg_des_LDADD = \
 test_alg_gost3411_2012_LDADD = \
 	lib/libcrypt_la-alg-gost3411-2012-core.lo \
 	lib/libcrypt_la-alg-gost3411-2012-hmac.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_gost3411_2012_hmac_LDADD = \
 	lib/libcrypt_la-alg-gost3411-2012-core.lo \
 	lib/libcrypt_la-alg-gost3411-2012-hmac.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_hmac_sha1_LDADD = \
 	lib/libcrypt_la-alg-sha1.lo \
 	lib/libcrypt_la-alg-hmac-sha1.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_md4_LDADD = \
 	lib/libcrypt_la-alg-md4.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_md5_LDADD = \
 	lib/libcrypt_la-alg-md5.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_pbkdf_hmac_sha256_LDADD = \
 	lib/libcrypt_la-alg-sha256.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_sha1_LDADD = \
 	lib/libcrypt_la-alg-sha1.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_sha256_LDADD = \
 	lib/libcrypt_la-alg-sha256.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_sha512_LDADD = \
 	lib/libcrypt_la-alg-sha512.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_alg_yescrypt_LDADD = \
 	lib/libcrypt_la-alg-sha256.lo \
 	lib/libcrypt_la-alg-yescrypt-common.lo \
 	lib/libcrypt_la-alg-yescrypt-opt.lo \
+	lib/libcrypt_la-util-base64.lo \
+	lib/libcrypt_la-util-xbzero.lo \
 	$(COMMON_TEST_OBJECTS)
 test_crypt_gost_yescrypt_LDADD = \
 	lib/libcrypt_la-alg-gost3411-2012-core.lo \
@@ -526,14 +574,20 @@ test_crypt_gost_yescrypt_LDADD = \
 	lib/libcrypt_la-alg-yescrypt-common.lo \
 	lib/libcrypt_la-alg-yescrypt-opt.lo \
 	lib/libcrypt_la-crypt-yescrypt.lo \
+	lib/libcrypt_la-util-base64.lo \
+	lib/libcrypt_la-util-xbzero.lo \
+	lib/libcrypt_la-util-xstrcpy.lo \
 	$(COMMON_TEST_OBJECTS)
 
+test_explicit_bzero_LDADD = \
+	lib/libcrypt_la-util-xbzero.lo
 test_getrandom_interface_LDADD = \
-	lib/libcrypt_la-randombytes.lo \
-	$(COMMON_TEST_OBJECTS)
+	lib/libcrypt_la-util-get-random-bytes.lo \
+	lib/libcrypt_la-util-xbzero.lo
 test_getrandom_fallbacks_LDADD = \
-	lib/libcrypt_la-randombytes.lo \
-	$(COMMON_TEST_OBJECTS)
+	lib/libcrypt_la-util-get-random-bytes.lo \
+	lib/libcrypt_la-util-xbzero.lo
+
 
 if HAVE_LD_WRAP
 test_getrandom_fallbacks_LDFLAGS = \
@@ -542,9 +596,56 @@ test_getrandom_fallbacks_LDFLAGS = \
   $(AM_LDFLAGS)
 endif
 
+# CI sometimes wants to compile all the test programs but not run them.
+test-programs: $(check_PROGRAMS)
+phony_targets += test-programs
+
 # Additional checks to run in `make distcheck'.
 distcheck-hook:
-	cd $(top_srcdir) && perlcritic ./
+	cd $(top_srcdir) && \
+	  $(PERL) ./$(SCRIPTS_AUX)/check-perlcritic-config && \
+	  perlcritic --quiet ./
+
+# Target for generating a signed release tarball.
+release: libxcrypt-$(VERSION).tar.xz.sha256sum libxcrypt-gpgkey.gpg
+phony_targets += release
+
+libxcrypt-$(VERSION).tar.xz.asc: dist-xz
+	$(GPG2) \
+		--quiet \
+		--armor \
+		--detach-sign \
+		--default-key F52E98007594C21D \
+		--output libxcrypt-$(VERSION).tar.xz.asc.T \
+		libxcrypt-$(VERSION).tar.xz
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change \
+		libxcrypt-$(VERSION).tar.xz.asc.T \
+		libxcrypt-$(VERSION).tar.xz.asc
+
+libxcrypt-$(VERSION).tar.xz.sha256sum: libxcrypt-$(VERSION).tar.xz.asc
+	$(SHA256SUM) \
+		libxcrypt-$(VERSION).tar.xz \
+		libxcrypt-$(VERSION).tar.xz.asc \
+		> libxcrypt-$(VERSION).tar.xz.sha256sum.T
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change \
+		libxcrypt-$(VERSION).tar.xz.sha256sum.T \
+		libxcrypt-$(VERSION).tar.xz.sha256sum
+
+libxcrypt-gpgkey.gpg:
+	$(GPG2) \
+		--export \
+		--export-options \
+			export-minimal \
+			F52E98007594C21D \
+		> libxcrypt-gpgkey.gpg.T
+	$(AM_V_at)$(SCRIPTS_AUX)/move-if-change \
+		libxcrypt-gpgkey.gpg.T \
+		libxcrypt-gpgkey.gpg
+
+CLEANFILES += \
+	libxcrypt-$(VERSION).tar.xz.asc* \
+	libxcrypt-$(VERSION).tar.xz.sha256sum* \
+	libxcrypt-gpgkey.gpg*
 
 # Every object file depends on crypt-symbol-vers.h and crypt-hashes.h,
 # which are generated files, so automatic dependency generation is not

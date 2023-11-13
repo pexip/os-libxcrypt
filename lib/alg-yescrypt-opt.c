@@ -33,6 +33,7 @@
 #if INCLUDE_yescrypt || INCLUDE_scrypt || INCLUDE_gost_yescrypt
 
 #pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wconversion"
 #ifdef __clang__
 #pragma GCC diagnostic ignored "-Wtautological-constant-out-of-range-compare"
 #endif
@@ -91,9 +92,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define insecure_memzero XCRYPT_SECURE_MEMSET
 #include "alg-sha256.h"
-#include "alg-yescrypt-sysendian.h"
+#include "byteorder.h"
 
 #define YESCRYPT_INTERNAL
 #include "alg-yescrypt.h"
@@ -115,7 +115,12 @@
 #endif
 
 #ifdef __SSE__
-#define PREFETCH(x, hint) _mm_prefetch((const char *)(x), (hint));
+#define PREFETCH(x, hint) _mm_prefetch((x), (hint));
+/* Older versions of clang have a bug in their xmmintrin.h that causes
+   spurious -Wcast-qual warnings on uses of _mm_prefetch.  */
+# if defined __clang_major__ && __clang_major__ < 11
+#  pragma clang diagnostic ignored "-Wcast-qual"
+# endif
 #else
 #undef PREFETCH
 #endif
@@ -252,7 +257,7 @@ static inline void salsa20_simd_unshuffle(const salsa20_blk_t *Bin,
 	XOR_X(in) \
 	SALSA20_wrapper(out, SALSA20_8ROUNDS)
 
-#define INTEGERIFY _mm_cvtsi128_si32(X0)
+#define INTEGERIFY (uint32_t)_mm_cvtsi128_si32(X0)
 
 #else /* !defined(__SSE2__) */
 
@@ -330,7 +335,7 @@ static inline void salsa20(salsa20_blk_t *restrict B,
 
 #if 0
 	/* Too expensive */
-	insecure_memzero(&X, sizeof(X));
+	explicit_bzero(&X, sizeof(X));
 #endif
 }
 
@@ -509,7 +514,7 @@ static volatile uint64_t Smask2var = Smask2;
 #define PWXFORM_SIMD(X) { \
 	uint64_t x; \
 	FORCE_REGALLOC_1 \
-	uint32_t lo = x = EXTRACT64(X) & Smask2reg; \
+	uint32_t lo = (uint32_t)(x = ((uint64_t)EXTRACT64(X)) & Smask2reg); \
 	FORCE_REGALLOC_2 \
 	uint32_t hi = x >> 32; \
 	X = _mm_mul_epu32(HI32(X), X); \
@@ -833,7 +838,7 @@ static void smix1(uint8_t *B, size_t r, uint32_t N, yescrypt_flags_t flags,
 		salsa20_blk_t *dst = &X[i];
 		size_t k;
 		for (k = 0; k < 16; k++)
-			tmp->w[k] = le32dec(&src->w[k]);
+			tmp->w[k] = le32dec((const uint8_t *) &src->w[k]);
 		salsa20_simd_shuffle(tmp, dst);
 	}
 
@@ -923,7 +928,7 @@ static void smix1(uint8_t *B, size_t r, uint32_t N, yescrypt_flags_t flags,
 		salsa20_blk_t *dst = (salsa20_blk_t *)&B[i * 64];
 		size_t k;
 		for (k = 0; k < 16; k++)
-			le32enc(&tmp->w[k], src->w[k]);
+			le32enc((uint8_t *)&tmp->w[k], src->w[k]);
 		salsa20_simd_unshuffle(tmp, dst);
 	}
 }
@@ -953,7 +958,7 @@ static void smix2(uint8_t *B, size_t r, uint32_t N, uint64_t Nloop,
 		salsa20_blk_t *dst = &X[i];
 		size_t k;
 		for (k = 0; k < 16; k++)
-			tmp->w[k] = le32dec(&src->w[k]);
+			tmp->w[k] = le32dec((const uint8_t *)&src->w[k]);
 		salsa20_simd_shuffle(tmp, dst);
 	}
 
@@ -1008,7 +1013,7 @@ static void smix2(uint8_t *B, size_t r, uint32_t N, uint64_t Nloop,
 		salsa20_blk_t *dst = (salsa20_blk_t *)&B[i * 64];
 		size_t k;
 		for (k = 0; k < 16; k++)
-			le32enc(&tmp->w[k], src->w[k]);
+			le32enc((uint8_t *)&tmp->w[k], src->w[k]);
 		salsa20_simd_unshuffle(tmp, dst);
 	}
 }
@@ -1123,7 +1128,8 @@ static void smix(uint8_t *B, size_t r, uint32_t N, uint32_t p, uint32_t t,
 				ctx_i = (pwxform_ctx_t *)(Si + Sbytes);
 			}
 			smix2(Bp, r, N, Nloop_all - Nloop_rw,
-			    flags & ~YESCRYPT_RW, V, NROM, VROM, XYp, ctx_i);
+                              flags & (yescrypt_flags_t)~YESCRYPT_RW,
+                              V, NROM, VROM, XYp, ctx_i);
 		}
 	}
 #ifdef _OPENMP
@@ -1205,8 +1211,13 @@ static int yescrypt_kdf_body(const yescrypt_shared_t *shared,
 	    N > SIZE_MAX / 128 / r)
 		goto out_EINVAL;
 	if (flags & YESCRYPT_RW) {
+		/* p cannot be greater than SIZE_MAX/Salloc on 64-bit systems,
+		   but it can on 32-bit systems.  */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wtype-limits"
 		if (N / p <= 3 || p > SIZE_MAX / Salloc)
 			goto out_EINVAL;
+#pragma GCC diagnostic pop
 	}
 #ifdef _OPENMP
 	else if (N > SIZE_MAX / 128 / (r * p)) {
@@ -1356,12 +1367,12 @@ static int yescrypt_kdf_body(const yescrypt_shared_t *shared,
 	}
 
 	if (flags) {
-		insecure_memzero(sha256, sizeof(sha256));
-		insecure_memzero(dk, sizeof(dk));
+		explicit_bzero(sha256, sizeof(sha256));
+		explicit_bzero(dk, sizeof(dk));
 	}
 
 	if (free_region(&tmp)) {
-		insecure_memzero(buf, buflen); /* must preserve errno */
+		explicit_bzero(buf, buflen); /* must preserve errno */
 		return -1;
 	}
 
@@ -1425,7 +1436,7 @@ int yescrypt_kdf(const yescrypt_shared_t *shared, yescrypt_local_t *local,
 	    flags, N, r, p, t, NROM, buf, buflen);
 #ifndef SKIP_MEMZERO
 	if (passwd == dk)
-		insecure_memzero(dk, sizeof(dk));
+		explicit_bzero(dk, sizeof(dk));
 #endif
 	return retval;
 }
@@ -1473,7 +1484,7 @@ int yescrypt_init_shared(yescrypt_shared_t *shared,
 	half2.aligned = (uint8_t *)half2.aligned + half1.aligned_size;
 
 	if (yescrypt_kdf(NULL, &half1,
-	    seed, seedlen, (uint8_t *)"yescrypt-ROMhash", 16, &subparams,
+	    seed, seedlen, (const uint8_t *)"yescrypt-ROMhash", 16, &subparams,
 	    salt, sizeof(salt)))
 		goto fail;
 
@@ -1496,11 +1507,11 @@ int yescrypt_init_shared(yescrypt_shared_t *shared,
 	tag[4] = le64dec(salt + 16);
 	tag[5] = le64dec(salt + 24);
 
-	insecure_memzero(salt, sizeof(salt));
+	explicit_bzero(salt, sizeof(salt));
 	return 0;
 
 fail:
-	insecure_memzero(salt, sizeof(salt));
+	explicit_bzero(salt, sizeof(salt));
 	if (!(params->flags & YESCRYPT_SHARED_PREALLOCATED))
 		free_region(shared);
 	return -1;

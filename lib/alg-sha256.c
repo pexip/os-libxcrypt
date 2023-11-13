@@ -1,6 +1,6 @@
 /*-
  * Copyright 2005-2016 Colin Percival
- * Copyright 2016-2018 Alexander Peslyak
+ * Copyright 2016-2018,2021 Alexander Peslyak
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,10 +29,8 @@
 
 #if INCLUDE_gost_yescrypt || INCLUDE_yescrypt || INCLUDE_scrypt || INCLUDE_sha256crypt
 
-#define insecure_memzero XCRYPT_SECURE_MEMSET
-#include "alg-yescrypt-sysendian.h"
-
 #include "alg-sha256.h"
+#include "byteorder.h"
 
 #ifdef __ICC
 /* Miscompile with icc 14.0.0 (at least), so don't use restrict there */
@@ -44,40 +42,6 @@
 #else
 #define restrict
 #endif
-
-/*
- * Encode a length len*2 vector of (uint32_t) into a length len*8 vector of
- * (uint8_t) in big-endian form.
- */
-static void
-be32enc_vect(uint8_t * dst, const uint32_t * src, size_t len)
-{
-
-	/* Encode vector, two words at a time. */
-	do {
-		be32enc(&dst[0], src[0]);
-		be32enc(&dst[4], src[1]);
-		src += 2;
-		dst += 8;
-	} while (--len);
-}
-
-/*
- * Decode a big-endian length len*8 vector of (uint8_t) into a length
- * len*2 vector of (uint32_t).
- */
-static void
-be32dec_vect(uint32_t * dst, const uint8_t * src, size_t len)
-{
-
-	/* Decode vector, two words at a time. */
-	do {
-		dst[0] = be32dec(&src[0]);
-		dst[1] = be32dec(&src[4]);
-		src += 8;
-		dst += 2;
-	} while (--len);
-}
 
 /* SHA256 round constants. */
 static const uint32_t Krnd[64] = {
@@ -101,7 +65,11 @@ static const uint32_t Krnd[64] = {
 
 /* Elementary functions used by SHA256 */
 #define Ch(x, y, z)	((x & (y ^ z)) ^ z)
-#define Maj(x, y, z)	((x & (y | z)) | (y & z))
+#if 1 /* Explicit caching/reuse of common subexpression between rounds */
+#define Maj(x, y, z)	(y ^ ((x_xor_y = x ^ y) & y_xor_z))
+#else /* Let the compiler cache/reuse or not */
+#define Maj(x, y, z)	(y ^ ((x ^ y) & (y ^ z)))
+#endif
 #define SHR(x, n)	(x >> n)
 #define ROTR(x, n)	((x >> n) | (x << (32 - n)))
 #define S0(x)		(ROTR(x, 2) ^ ROTR(x, 13) ^ ROTR(x, 22))
@@ -113,7 +81,8 @@ static const uint32_t Krnd[64] = {
 #define RND(a, b, c, d, e, f, g, h, k)			\
 	h += S1(e) + Ch(e, f, g) + k;			\
 	d += h;						\
-	h += S0(a) + Maj(a, b, c);
+	h += S0(a) + Maj(a, b, c);			\
+	y_xor_z = x_xor_y;
 
 /* Adjusted round function for rotating state */
 #define RNDr(S, W, i, ii)			\
@@ -139,13 +108,14 @@ SHA256_Transform(uint32_t state[static restrict 8],
 	int i;
 
 	/* 1. Prepare the first part of the message schedule W. */
-	be32dec_vect(W, block, 8);
+	be32dec_vect(W, block, 16);
 
 	/* 2. Initialize working variables. */
 	memcpy(S, state, 32);
 
 	/* 3. Mix. */
 	for (i = 0; i <= 48; i += 16) {
+		uint32_t x_xor_y, y_xor_z = S[(65 - i) % 8] ^ S[(66 - i) % 8];
 		RNDr(S, W, 0, i);
 		RNDr(S, W, 1, i);
 		RNDr(S, W, 2, i);
@@ -306,7 +276,7 @@ SHA256_Update(SHA256_CTX * ctx, const void * in, size_t len)
 	_SHA256_Update(ctx, in, len, tmp32);
 
 	/* Clean the stack. */
-	insecure_memzero(tmp32, 288);
+	explicit_bzero(tmp32, 288);
 }
 
 /**
@@ -323,7 +293,7 @@ _SHA256_Final(uint8_t digest[32], SHA256_CTX * ctx,
 	SHA256_Pad(ctx, tmp32);
 
 	/* Write the hash. */
-	be32enc_vect(digest, ctx->state, 4);
+	be32enc_vect(digest, ctx->state, 8);
 }
 
 /* Wrapper function for intermediate-values sanitization. */
@@ -336,10 +306,10 @@ SHA256_Final(uint8_t digest[32], SHA256_CTX * ctx)
 	_SHA256_Final(digest, ctx, tmp32);
 
 	/* Clear the context state. */
-	insecure_memzero(ctx, sizeof(SHA256_CTX));
+	explicit_bzero(ctx, sizeof(SHA256_CTX));
 
 	/* Clean the stack. */
-	insecure_memzero(tmp32, 288);
+	explicit_bzero(tmp32, 288);
 }
 
 /**
@@ -357,8 +327,8 @@ SHA256_Buf(const void * in, size_t len, uint8_t digest[32])
 	_SHA256_Final(digest, &ctx, tmp32);
 
 	/* Clean the stack. */
-	insecure_memzero(&ctx, sizeof(SHA256_CTX));
-	insecure_memzero(tmp32, 288);
+	explicit_bzero(&ctx, sizeof(SHA256_CTX));
+	explicit_bzero(tmp32, 288);
 }
 
 #endif /* INCLUDE_gost_yescrypt || INCLUDE_yescrypt || INCLUDE_scrypt || INCLUDE_sha256crypt */
@@ -414,9 +384,9 @@ HMAC_SHA256_Init(HMAC_SHA256_CTX * ctx, const void * _K, size_t Klen)
 	_HMAC_SHA256_Init(ctx, _K, Klen, tmp32, pad, khash);
 
 	/* Clean the stack. */
-	insecure_memzero(tmp32, 288);
-	insecure_memzero(khash, 32);
-	insecure_memzero(pad, 64);
+	explicit_bzero(tmp32, 288);
+	explicit_bzero(khash, 32);
+	explicit_bzero(pad, 64);
 }
 
 /**
@@ -442,7 +412,7 @@ HMAC_SHA256_Update(HMAC_SHA256_CTX * ctx, const void * in, size_t len)
 	_HMAC_SHA256_Update(ctx, in, len, tmp32);
 
 	/* Clean the stack. */
-	insecure_memzero(tmp32, 288);
+	explicit_bzero(tmp32, 288);
 }
 
 /**
@@ -476,8 +446,8 @@ HMAC_SHA256_Final(uint8_t digest[32], HMAC_SHA256_CTX * ctx)
 	_HMAC_SHA256_Final(digest, ctx, tmp32, ihash);
 
 	/* Clean the stack. */
-	insecure_memzero(tmp32, 288);
-	insecure_memzero(ihash, 32);
+	explicit_bzero(tmp32, 288);
+	explicit_bzero(ihash, 32);
 }
 
 /**
@@ -498,9 +468,9 @@ HMAC_SHA256_Buf(const void * K, size_t Klen, const void * in, size_t len,
 	_HMAC_SHA256_Final(digest, &ctx, tmp32, &tmp8[0]);
 
 	/* Clean the stack. */
-	insecure_memzero(&ctx, sizeof(HMAC_SHA256_CTX));
-	insecure_memzero(tmp32, 288);
-	insecure_memzero(tmp8, 96);
+	explicit_bzero(&ctx, sizeof(HMAC_SHA256_CTX));
+	explicit_bzero(tmp32, 288);
+	explicit_bzero(tmp8, 96);
 }
 
 /* Add padding and terminating bit-count, but don't invoke Transform yet. */
@@ -586,11 +556,11 @@ PBKDF2_SHA256(const uint8_t * passwd, size_t passwdlen, const uint8_t * salt,
 			memcpy(u.state, hctx.ictx.state, sizeof(u.state));
 			SHA256_Transform(u.state, hctx.ictx.buf,
 			    &tmp32[0], &tmp32[64]);
-			be32enc_vect(hctx.octx.buf, u.state, 4);
+			be32enc_vect(hctx.octx.buf, u.state, 8);
 			memcpy(u.state, hctx.octx.state, sizeof(u.state));
 			SHA256_Transform(u.state, hctx.octx.buf,
 			    &tmp32[0], &tmp32[64]);
-			be32enc_vect(&buf[i * 32], u.state, 4);
+			be32enc_vect(&buf[i * 32], u.state, 8);
 		}
 
 		goto cleanup;
@@ -639,15 +609,15 @@ generic:
 	}
 
 	/* Clean the stack. */
-	insecure_memzero(&Phctx, sizeof(HMAC_SHA256_CTX));
-	insecure_memzero(&PShctx, sizeof(HMAC_SHA256_CTX));
-	insecure_memzero(U, 32);
-	insecure_memzero(T, 32);
+	explicit_bzero(&Phctx, sizeof(HMAC_SHA256_CTX));
+	explicit_bzero(&PShctx, sizeof(HMAC_SHA256_CTX));
+	explicit_bzero(U, 32);
+	explicit_bzero(T, 32);
 
 cleanup:
-	insecure_memzero(&hctx, sizeof(HMAC_SHA256_CTX));
-	insecure_memzero(tmp32, 288);
-	insecure_memzero(&u, sizeof(u));
+	explicit_bzero(&hctx, sizeof(HMAC_SHA256_CTX));
+	explicit_bzero(tmp32, 288);
+	explicit_bzero(&u, sizeof(u));
 }
 
 #endif /* INCLUDE_gost_yescrypt || INCLUDE_yescrypt || INCLUDE_scrypt */

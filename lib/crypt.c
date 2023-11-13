@@ -1,7 +1,7 @@
 /* High-level libcrypt interfaces.
 
    Copyright 2007-2017 Thorsten Kukuk and Zack Weinberg
-   Copyright 2018-2019 Björn Esser
+   Copyright 2018-2021 Björn Esser
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Lesser General Public License
@@ -18,7 +18,6 @@
    <https://www.gnu.org/licenses/>.  */
 
 #include "crypt-port.h"
-#include "xcrypt.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -69,6 +68,7 @@ struct hashfn
   /* The type of this field is unsigned char to ensure that it cannot
      be set larger than the size of an internal buffer in crypt_gensalt_rn.  */
   unsigned char nrbytes;
+  unsigned char is_strong;
 };
 
 static const struct hashfn hash_algorithms[] =
@@ -110,6 +110,39 @@ get_hashfn (const char *setting)
   return 0;
 }
 
+/* Check a setting string for generic validity, according to the rule
+   stated in crypt(5):
+
+      "Hashed passphrases are always entirely printable ASCII, and do
+      not contain any whitespace or the characters ':', ';', '*', '!',
+      or '\\'.  (These characters are used as delimiters and special
+      markers in the passwd(5) and shadow(5) files.)"
+
+   There is a precautionary case for rejecting additional ASCII
+   punctuation, particularly other characters often given syntactic
+   significance in configuration files, such as " ' and #.  However,
+   this check didn't used to exist at all, and some of the hash
+   function implementations don't restrict the set of byte values they
+   they will accept in their setting strings (particularly in the salt
+   component) either.  Thus, to maintain compatibility with the widest
+   variety of existing hashed passphrases, we are only enforcing the
+   documented rule for now.
+
+   See <https://github.com/besser82/libxcrypt/issues/135> for
+   additional discussion.  */
+static int
+check_badsalt_chars (const char *setting)
+{
+  size_t i;
+
+  for (i = 0; setting[i] != '\0'; i++)
+    if ((unsigned char) setting[i] <= 0x20 ||
+        (unsigned char) setting[i] >= 0x7f)
+      return 1;
+
+  return strcspn (setting, "!*:;\\") != i;
+}
+
 static void
 do_crypt (const char *phrase, const char *setting, struct crypt_data *data)
 {
@@ -128,6 +161,12 @@ do_crypt (const char *phrase, const char *setting, struct crypt_data *data)
       errno = ERANGE;
       return;
     }
+  if (check_badsalt_chars (setting))
+    {
+      errno = EINVAL;
+      return;
+    }
+
   const struct hashfn *h = get_hashfn (setting);
   if (!h)
     {
@@ -141,7 +180,7 @@ do_crypt (const char *phrase, const char *setting, struct crypt_data *data)
             (unsigned char *)data->output, sizeof data->output,
             cint->alg_specific, sizeof cint->alg_specific);
 
-  XCRYPT_SECURE_MEMSET (data->internal, sizeof data->internal);
+  explicit_bzero (data->internal, sizeof data->internal);
 }
 
 #if INCLUDE_crypt_rn
@@ -270,7 +309,7 @@ crypt_gensalt_rn (const char *prefix, unsigned long count,
               (unsigned char *)output, (size_t)output_size);
 
   if (internal_nrbytes)
-    XCRYPT_SECURE_MEMSET (internal_rbytes, internal_nrbytes);
+    explicit_bzero (internal_rbytes, internal_nrbytes);
 
   return output[0] == '*' ? 0 : output;
 }
@@ -315,14 +354,25 @@ crypt_checksalt (const char *setting)
 {
   int retval = CRYPT_SALT_INVALID;
 
-  if (!setting)
-    return retval;
+  if (!setting ||                     /* NULL string */
+      setting[0] == '\0' ||           /* empty passphrase */
+      check_badsalt_chars (setting))  /* bad salt chars */
+    goto end;
 
   const struct hashfn *h = get_hashfn (setting);
 
   if (h)
-    retval = CRYPT_SALT_OK;
+    {
+      retval = CRYPT_SALT_OK;
 
+      if (h->is_strong == 0)
+        {
+          retval = CRYPT_SALT_METHOD_LEGACY;
+          goto end;
+        }
+    }
+
+end:
   return retval;
 }
 SYMVER_crypt_checksalt;
