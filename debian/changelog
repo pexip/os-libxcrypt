@@ -1,3 +1,9 @@
+libxcrypt (1:4.4.33-2+pexip24u3) pexip-bookworm; urgency=medium
+
+  * New versioning scheme
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 01 Feb 2024 16:08:38 +0000
+
 libxcrypt (1:4.4.33-2pexip2) pexip-bookworm; urgency=medium
 
   * Bookworm build for product distribution
