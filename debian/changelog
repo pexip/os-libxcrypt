@@ -1,3 +1,52 @@
+libxcrypt (1:4.4.38-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Marco d'Itri <md@linux.it>  Thu, 16 Jan 2025 00:59:41 +0100
+
+libxcrypt (1:4.4.36-5) unstable; urgency=medium
+
+  * Fix the testsuite autopkgtest, which relied on some invalid
+    assumptions about the build environment which recently changed.
+  * Add support for hurd-amd64. (Closes: #1076326)
+  * Fix crypt_gensalt(3). (Closes: #1072803)
+
+ -- Marco d'Itri <md@linux.it>  Fri, 16 Aug 2024 01:21:08 +0200
+
+libxcrypt (1:4.4.36-4) unstable; urgency=medium
+
+  * Reupload to unstable.
+
+ -- Marco d'Itri <md@linux.it>  Mon, 01 Jan 2024 14:00:09 +0100
+
+libxcrypt (1:4.4.36-3) experimental; urgency=medium
+
+  [ Helmut Grohne ]
+  * Move libcrypt.so.* to /usr. (Closes: #1055941)
+
+ -- Marco d'Itri <md@linux.it>  Thu, 16 Nov 2023 22:31:28 +0100
+
+libxcrypt (1:4.4.36-2) unstable; urgency=medium
+
+  * Stop marking libcrypt1 Important+Protected. This was needed to help
+    the buster to bullseye upgrade path, but now it not much useful
+    anymore and it makes hard to uninstall additional multiarch packages.
+    (Closes: #1024616)
+
+ -- Marco d'Itri <md@linux.it>  Sat, 29 Jul 2023 18:32:40 +0200
+
+libxcrypt (1:4.4.36-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Marco d'Itri <md@linux.it>  Tue, 25 Jul 2023 04:47:38 +0200
+
+libxcrypt (1:4.4.35-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Marco d'Itri <md@linux.it>  Sun, 11 Jun 2023 00:53:18 +0200
+
 libxcrypt (1:4.4.33-2) unstable; urgency=medium
 
   * Fix the loong64 architecture name. (Closes: #1027262)
