@@ -243,7 +243,7 @@ and
 .Nm crypt_ra
 write an
 .Em invalid
-hashed passphrase to the
+hash to the
 .Fa output
 field of their
 .Fa data
@@ -278,6 +278,9 @@ below.)
 All four functions set
 .Va errno
 when they fail.
+When the functions succeed, the value of
+.Va errno
+is unspecified and must not be relied upon.
 .Sh ERRORS
 .Bl -tag -width Er
 .It Er EINVAL
@@ -347,7 +350,7 @@ returned by
 The behavior described above for this implementation,
 setting
 .Va errno
-and returning an invalid hashed passphrase different from
+and returning an invalid hash different from
 .Fa setting ,
 is chosen to make these applications fail closed when an error occurs.
 .Pp

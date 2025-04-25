@@ -1,7 +1,7 @@
 # Process this file with autoconf to produce a configure script.
 m4_include([build-aux/m4/zw_automodern.m4])
 AC_INIT([xcrypt],
-        [4.4.33],
+        [4.4.38],
         [https://github.com/besser82/libxcrypt/issues],
         [libxcrypt],
         [https://github.com/besser82/libxcrypt])
@@ -24,18 +24,14 @@ AH_BOTTOM(
 # PKG_INSTALLDIR may not be defined, but we have a
 # compatibility replacement.
 m4_pattern_allow([PKG_INSTALLDIR])
+PKG_PROG_PKG_CONFIG_COMPAT([0.27], [PKG_CONFIG=false])
+AS_IF([test x"$PKG_CONFIG" != xfalse],
+  [PKG_INSTALLDIR],
+  [PKG_INSTALLDIR_COMPAT])
 
 # Checks for programs.
 AC_CANONICAL_HOST
 AC_PROG_CC
-
-# Dependencies
-PKG_PROG_PKG_CONFIG
-if $PKG_CONFIG --atleast-pkgconfig-version 0.27; then
-  PKG_INSTALLDIR
-else
-  PKG_INSTALLDIR_COMPAT
-fi
 
 # C99 language and library features are used unconditionally.
 # Don't even try to build with an older compiler.
@@ -303,13 +299,11 @@ AS_IF([test $ac_cv_header_ucontext_h = yes],
 #include <ucontext.h>
 static int x;
 static void fn1(void) {}
-static void fn2(int a, int b) { x = a - b; }
 ]], [[
   ucontext_t uc1, uc2;
   if (getcontext(&uc1)) return 1;
   if (setcontext(&uc1)) return 1;
   makecontext(&uc1, fn1, 0);
-  makecontext(&uc2, fn2, 2, 1, 1);
   if (swapcontext(&uc1, &uc2)) return 1;
   return x;
 ]])],

@@ -13,7 +13,7 @@
 .\"
 .\" There's ABSOLUTELY NO WARRANTY, express or implied.
 .\"
-.Dd October 11, 2017
+.Dd March 27, 2024
 .Dt CRYPT_GENSALT 3
 .Os "Openwall Project"
 .Sh NAME
@@ -63,13 +63,12 @@ and
 .Fa prefix
 selects the hashing method to use.
 .Fa count
-controls the CPU time cost of the hash;
-the valid range for
+controls the processing cost of the hash;
+the valid range and exact meaning of
 .Fa count
-and the exact meaning of
-.Dq CPU time cost
-depends on the hashing method,
-but larger numbers correspond to more costly hashes.
+depend on the hashing method,
+but larger numbers correspond to more costly hashes
+in terms of CPU time and possibly memory usage.
 .Fa rbytes
 should point to
 .Fa nrbytes
@@ -125,6 +124,9 @@ for more detail on the format of this string.
 Upon error, they return a null pointer and set
 .Va errno
 to an appropriate error code.
+When the functions succeed, the value of
+.Va errno
+is unspecified and must not be relied upon.
 .Pp
 .Nm crypt_gensalt
 places its result in a static storage area,
@@ -240,6 +242,7 @@ to system.
 .Sh ATTRIBUTES
 For an explanation of the terms used in this section, see
 .Xr attributes 7 .
+.ad l
 .TS
 allbox;
 lb lb lb
@@ -253,6 +256,7 @@ T{
 .Nm crypt_gensalt_ra
 T}	Thread safety	MT-Safe
 .TE
+.ad
 .sp
 .Sh SEE ALSO
 .Xr crypt 3 ,
