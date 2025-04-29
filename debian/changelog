@@ -1,3 +1,9 @@
+libxcrypt (1:4.4.38-1+pexip25u1) pexip-trixie; urgency=medium
+
+  * Initial trixie build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Tue, 29 Apr 2025 22:38:30 +0100
+
 libxcrypt (1:4.4.38-1) unstable; urgency=medium
 
   * New upstream release.
